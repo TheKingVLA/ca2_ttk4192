@@ -6,6 +6,12 @@ from shapely.geometry import LineString, Point, MultiPoint
 
 from visualization_msgs.msg import Marker, MarkerArray
 
+# 2.b
+from nav_msgs.msg import OccupancyGrid
+
+# 2.c
+from ca2_ttk4192.srv import isThroughObstacle, isThroughObstacleResponse, isInObstacle, isInObstacleResponse
+
 class Line():
     def __init__(self, p0, p1):
         self.p = np.array(p0)
@@ -44,6 +50,9 @@ class CollisionDetector:
             print("NameError: ")
             print("OccupancyGrid is not yet imported...")
 
+        # 2.b: subscribe to /map
+        self.map_sub = rospy.Subscriber("/map", OccupancyGrid, self.map_callback)
+
         try:
             self.path_through_obstacle_service = rospy.Service('path_through_obstacle', isThroughObstacle, self.check_is_through_obstacle)
             self.point_in_obstacle_service = rospy.Service('point_in_obstacle', isInObstacle, self.check_is_in_obstacle)
@@ -58,6 +67,10 @@ class CollisionDetector:
         self.obstacles = []
         self.obstacle_objects = None
 
+    # 2.b: callback function
+    def map_callback(self, data):
+        self.map = data
+        self.new_map = True
 
     def create_obstacles_from_map(self):
         obstacle_map = self.map.data
@@ -146,5 +159,6 @@ rate = rospy.Rate(1.0)
 
 while not rospy.is_shutdown():
     rate.sleep()
-    collision_detector.draw_obstacles()
-    collision_detector.create_obstacles_from_map()
+    if collision_detector.new_map: # 2.b: Update only if new map
+        collision_detector.draw_obstacles()
+        collision_detector.create_obstacles_from_map()

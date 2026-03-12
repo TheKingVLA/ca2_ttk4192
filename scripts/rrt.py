@@ -6,6 +6,9 @@ from visualization_msgs.msg import Marker, MarkerArray
 from geometry_msgs.msg import Point
 from ca2_ttk4192.srv import isThroughObstacle, isThroughObstacleRequest, isInObstacle, isInObstacleRequest, positionControl, positionControlRequest
 
+# 4.a
+import math
+import random
 
 point_in_obstacle_service = rospy.ServiceProxy('point_in_obstacle', isInObstacle)
 
@@ -66,6 +69,37 @@ def get_edge_as_marker(first_point, second_point, color, identity, thickness=0.0
     
     return edge_marker
 
+# 4.a <--
+def get_distance(p0, p1):
+    return math.hypot(p1[0] - p0[0], p1[1] - p0[1])
+
+def get_random_point(xmin, xmax, ymin, ymax, goal, goal_bias):
+    if random.random() < goal_bias:
+        return goal
+    return [random.uniform(xmin, xmax), random.uniform(ymin, ymax)]
+
+def steer(nearest_point, random_point, step_size):
+    dx = random_point[0] - nearest_point[0]
+    dy = random_point[1] - nearest_point[1]
+    distance = math.hypot(dx, dy)
+
+    if distance <= step_size:
+        return [random_point[0], random_point[1]]
+    
+    scale = step_size / distance
+    return [nearest_point[0] + scale * dx, nearest_point[1] + scale * dy]
+
+def reconstruct_path(parent, endpos):
+    path = [list(endpos)]
+    current = tuple(endpos)
+
+    while parent[current] is not None:
+        current = parent[current]
+        path.append([current[0], current[1]])
+
+    path.reverse()
+    return path
+# -->
 
 if __name__ == '__main__':
 
@@ -75,14 +109,19 @@ if __name__ == '__main__':
     # Init the RRT node
     rospy.init_node('RRT')
 
-
+    # 4.a
+    rospy.wait_for_service("point_in_obstacle")
+    rospy.wait_for_service("path_through_obstacle")
+    rospy.wait_for_service("/position_control")
 
     # -----------------------------------------------
     # The start and end positions of the "short maze"
     startpos = (0.0, 0.0)
     endpos = (4.5, 5.0)
 
-
+    # 4.a
+    short_maze_startpos = startpos
+    short_maze_endpos = endpos
 
     # -------------------------------------------------------------------------
     # The start and end positions of the bonus task with the "complicated maze"
@@ -127,13 +166,13 @@ if __name__ == '__main__':
     # Create a blue-green square representing the start
     start_rgb_color = [0/256, 158/256, 115/256]
     start_marker_size = 0.2
-    start_marker = get_marker(Marker.CUBE, list_of_positions[0], start_marker_size, start_rgb_color, marker_identity)
+    start_marker = get_marker(Marker.CUBE, short_maze_startpos, start_marker_size, start_rgb_color, marker_identity)
     marker_identity += 1
 
     # Create a vermillion square representing the goal
     end_rgb_color = [213/256, 94/256, 0/256]
     end_marker_size = 0.2
-    end_marker = get_marker(Marker.CUBE, list_of_positions[-1], end_marker_size, end_rgb_color, marker_identity)
+    end_marker = get_marker(Marker.CUBE, short_maze_endpos, end_marker_size, end_rgb_color, marker_identity)
     marker_identity +=1
 
     tree_marker.markers.append(start_marker)
@@ -143,13 +182,68 @@ if __name__ == '__main__':
     # Create reddish purple edges 
     edge_color = [204/256, 121/256, 167/256]
     
-    for index in range(len(list_of_positions)-1):
-        first_point = list_of_positions[index]
-        second_point = list_of_positions[index+1]
-        edge_marker = get_edge_as_marker(first_point, second_point, edge_color, marker_identity)
+    # 4.a <--
+    startpos = short_maze_startpos
+    endpos = short_maze_endpos
+
+    x_min = -1.5
+    x_max = 5.8
+    y_min = -1.5
+    y_max = 5.8
+    step_size = 0.35
+    goal_bias = 0.10
+    goal_tolerance = 0.40
+    max_iterations = 5000
+
+    nodes = [list(startpos)]
+    parent = {tuple(startpos): None}
+    final_path = None
+
+    for i in range(max_iterations):
+        random_point = get_random_point(x_min, x_max, y_min, y_max, list(endpos), goal_bias)
+
+        nearest_point = min(nodes, key=lambda node: get_distance(node, random_point))
+        new_point = steer(nearest_point, random_point, step_size)
+
+        if isInObstacle(new_point, obstacle_radius).inObstacle:
+            continue
+
+        if isThruObstacle(nearest_point, new_point, obstacle_radius).throughObstacle:
+            continue
+
+        if tuple(new_point) in parent:
+            continue
+
+        nodes.append(new_point)
+        parent[tuple(new_point)] = tuple(nearest_point)
+
+        edge_marker = get_edge_as_marker(nearest_point, new_point, edge_color, marker_identity)
         marker_identity += 1
         tree_marker.markers.append(edge_marker)
 
+        if get_distance(new_point, endpos) <= goal_tolerance:
+            if not isThruObstacle(new_point, endpos, obstacle_radius).throughObstacle:
+                parent[tuple(endpos)] = tuple(new_point)
+
+                edge_marker = get_edge_as_marker(new_point, endpos, edge_color, marker_identity)
+                marker_identity += 1
+                tree_marker.markers.append(edge_marker)
+
+                final_path = reconstruct_path(parent, endpos)
+                break
+    
+    if final_path is not None:
+        path_edge_color = [0/256, 114/256, 178/256]
+        
+        for i in range(len(final_path) - 1):
+            first_point = final_path[i]
+            second_point = final_path[i + 1]
+            edge_marker = get_edge_as_marker(first_point, second_point, path_edge_color, marker_identity,thickness=0.05)
+            marker_identity += 1
+            tree_marker.markers.append(edge_marker)
+    else:
+        rospy.logwarn("RRT did not find a path.")
+    # -->
 
     rospy.Rate(0.5).sleep() # needs to a bit for the publisher to start, a bit weird. 
     tree_publisher.publish(tree_marker)
@@ -164,11 +258,15 @@ if __name__ == '__main__':
     # desired position, so it will crash into possible obstacles. 
     # It is also not very well tuned (and quite slow).
 
+    # 4.a
+    if final_path is not None:
+        list_of_positions = final_path[1:]
+    else:
+        list_of_positions = []    
 
-    list_of_position = [[0.0, 2.0], [1.0, 2.0], [1.0, 1.0]]
     position_control = rospy.ServiceProxy('/position_control', positionControl)
 
-    for position in list_of_position:
+    for position in list_of_positions:
         rospy.wait_for_service('/position_control')
         request = Point(position[0], position[1], 0.0)
         response = position_control(request)
