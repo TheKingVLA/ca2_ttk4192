@@ -99,6 +99,67 @@ def reconstruct_path(parent, endpos):
 
     path.reverse()
     return path
+
+def rrt(startpos, endpos, obstacle_radius, tree_marker, marker_identity, edge_color):
+    x_min = -1.5
+    x_max = 5.8
+    y_min = -1.5
+    y_max = 5.8
+    step_size = 0.35
+    goal_bias = 0.10
+    goal_tolerance = 0.40
+    max_iterations = 5000
+
+    nodes = [list(startpos)]
+    parent = {tuple(startpos): None}
+    final_path = None
+
+    for i in range(max_iterations):
+        random_point = get_random_point(x_min, x_max, y_min, y_max, list(endpos), goal_bias)
+
+        nearest_point = min(nodes, key=lambda node: get_distance(node, random_point))
+        new_point = steer(nearest_point, random_point, step_size)
+
+        if isInObstacle(new_point, obstacle_radius).inObstacle:
+            continue
+
+        if isThruObstacle(nearest_point, new_point, obstacle_radius).throughObstacle:
+            continue
+
+        if tuple(new_point) in parent:
+            continue
+
+        nodes.append(new_point)
+        parent[tuple(new_point)] = tuple(nearest_point)
+
+        edge_marker = get_edge_as_marker(nearest_point, new_point, edge_color, marker_identity)
+        marker_identity += 1
+        tree_marker.markers.append(edge_marker)
+
+        if get_distance(new_point, endpos) <= goal_tolerance:
+            if not isThruObstacle(new_point, endpos, obstacle_radius).throughObstacle:
+                parent[tuple(endpos)] = tuple(new_point)
+
+                edge_marker = get_edge_as_marker(new_point, endpos, edge_color, marker_identity)
+                marker_identity += 1
+                tree_marker.markers.append(edge_marker)
+
+                final_path = reconstruct_path(parent, endpos)
+                break
+
+    if final_path is not None:
+        path_edge_color = [0/256, 114/256, 178/256]
+        
+        for i in range(len(final_path) - 1):
+            first_point = final_path[i]
+            second_point = final_path[i + 1]
+            edge_marker = get_edge_as_marker(first_point, second_point, path_edge_color, marker_identity, thickness=0.05)
+            marker_identity += 1
+            tree_marker.markers.append(edge_marker)
+    else:
+        rospy.logwarn("RRT did not find a path.")
+
+    return final_path, marker_identity, tree_marker
 # -->
 
 if __name__ == '__main__':
@@ -186,63 +247,14 @@ if __name__ == '__main__':
     startpos = short_maze_startpos
     endpos = short_maze_endpos
 
-    x_min = -1.5
-    x_max = 5.8
-    y_min = -1.5
-    y_max = 5.8
-    step_size = 0.35
-    goal_bias = 0.10
-    goal_tolerance = 0.40
-    max_iterations = 5000
-
-    nodes = [list(startpos)]
-    parent = {tuple(startpos): None}
-    final_path = None
-
-    for i in range(max_iterations):
-        random_point = get_random_point(x_min, x_max, y_min, y_max, list(endpos), goal_bias)
-
-        nearest_point = min(nodes, key=lambda node: get_distance(node, random_point))
-        new_point = steer(nearest_point, random_point, step_size)
-
-        if isInObstacle(new_point, obstacle_radius).inObstacle:
-            continue
-
-        if isThruObstacle(nearest_point, new_point, obstacle_radius).throughObstacle:
-            continue
-
-        if tuple(new_point) in parent:
-            continue
-
-        nodes.append(new_point)
-        parent[tuple(new_point)] = tuple(nearest_point)
-
-        edge_marker = get_edge_as_marker(nearest_point, new_point, edge_color, marker_identity)
-        marker_identity += 1
-        tree_marker.markers.append(edge_marker)
-
-        if get_distance(new_point, endpos) <= goal_tolerance:
-            if not isThruObstacle(new_point, endpos, obstacle_radius).throughObstacle:
-                parent[tuple(endpos)] = tuple(new_point)
-
-                edge_marker = get_edge_as_marker(new_point, endpos, edge_color, marker_identity)
-                marker_identity += 1
-                tree_marker.markers.append(edge_marker)
-
-                final_path = reconstruct_path(parent, endpos)
-                break
-    
-    if final_path is not None:
-        path_edge_color = [0/256, 114/256, 178/256]
-        
-        for i in range(len(final_path) - 1):
-            first_point = final_path[i]
-            second_point = final_path[i + 1]
-            edge_marker = get_edge_as_marker(first_point, second_point, path_edge_color, marker_identity,thickness=0.05)
-            marker_identity += 1
-            tree_marker.markers.append(edge_marker)
-    else:
-        rospy.logwarn("RRT did not find a path.")
+    final_path, marker_identity, tree_marker = rrt(
+        startpos,
+        endpos,
+        obstacle_radius,
+        tree_marker,
+        marker_identity,
+        edge_color
+    )
     # -->
 
     rospy.Rate(0.5).sleep() # needs to a bit for the publisher to start, a bit weird. 
