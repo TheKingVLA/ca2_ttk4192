@@ -63,6 +63,10 @@ add_service_files(
 DIRECTORY srv
 FILES 
 positionControl.srv
+
+# 2.d
+isInObstacle.srv
+isThroughObstacle.srv
 )
 
 ## Generate actions in the 'action' folder
